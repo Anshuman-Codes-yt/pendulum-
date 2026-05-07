@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pendulum</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0b0c10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #controls {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .ctrl-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    label {
+      color: rgba(255,255,255,0.35);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 90px;
+      height: 2px;
+      background: rgba(255,255,255,0.15);
+      outline: none;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #c8a97e;
+      cursor: pointer;
+    }
+
+    button#pauseBtn {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.5);
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 6px 14px;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    button#pauseBtn:hover {
+      border-color: #c8a97e;
+      color: #c8a97e;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="controls">
+  <div class="ctrl-group">
+    <label>Length</label>
+    <input type="range" id="lenSlider" min="80" max="260" value="170" step="1">
+  </div>
+  <button id="pauseBtn">Pause</button>
+  <div class="ctrl-group">
+    <label>Gravity</label>
+    <input type="range" id="gravSlider" min="1" max="30" value="9.8" step="0.1">
+  </div>
+</div>
+
+<script>
+  // ── Canvas setup ──────────────────────────────────────────────
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ── Physics state ─────────────────────────────────────────────
+  const state = {
+    angle:    Math.PI / 4,   // radians from vertical
+    omega:    0,             // angular velocity
+    length:   170,           // px
+    gravity:  9.8,           // px/s²  (scaled)
+    damping:  0.9995,        // energy retention per frame
+    paused:   false,
+    lastTime: null
+  };
+
+  // ── Controls ──────────────────────────────────────────────────
+  document.getElementById('lenSlider').addEventListener('input', e => {
+    state.length = +e.target.value;
+  });
+  document.getElementById('gravSlider').addEventListener('input', e => {
+    state.gravity = +e.target.value;
+  });
+  const pauseBtn = document.getElementById('pauseBtn');
+  pauseBtn.addEventListener('click', () => {
+    state.paused = !state.paused;
+    pauseBtn.textContent = state.paused ? 'Resume' : 'Pause';
+    if (!state.paused) { state.lastTime = null; requestAnimationFrame(loop); }
+  });
+
+  // ── Trail buffer ──────────────────────────────────────────────
+  const TRAIL_LEN = 34;
+  const trail = [];
+
+  // ── Drawing helpers ───────────────────────────────────────────
+  function drawBackground() {
+    // Very subtle radial glow at pivot
+    const { width: W, height: H } = canvas;
+    ctx.clearRect(0, 0, W, H);
+
+    // Fill
+    ctx.fillStyle = '#0b0c10';
+    ctx.fillRect(0, 0, W, H);
+
+    // Vignette
+    const vg = ctx.createRadialGradient(W/2, H/2, H*0.1, W/2, H/2, H*0.8);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawPivot(px, py) {
+    // Subtle halo
+    const halo = ctx.createRadialGradient(px, py, 0, px, py, 18);
+    halo.addColorStop(0, 'rgba(200,169,126,0.18)');
+    halo.addColorStop(1, 'rgba(200,169,126,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(px, py, 18, 0, Math.PI*2);
+    ctx.fill();
+
+    // Pivot dot
+    ctx.fillStyle = '#c8a97e';
+    ctx.beginPath();
+    ctx.arc(px, py, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  function drawRod(px, py, bx, by) {
+    // Subtle gradient rod
+    const grad = ctx.createLinearGradient(px, py, bx, by);
+    grad.addColorStop(0, 'rgba(200,169,126,0.6)');
+    grad.addColorStop(1, 'rgba(200,169,126,0.25)');
+
+    ctx.strokeStyle = grad;
+    ctx.lineWidth   = 1.5;
+    ctx.lineCap     = 'round';
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
+
+  function drawTrail(trail) {
+    for (let i = 1; i < trail.length; i++) {
+      const t  = i / trail.length;          // 0 → 1 (older → newer)
+      const alpha = t * t * 0.45;
+      const r   = Math.round(200 * t + 40 * (1 - t));
+      const g   = Math.round(169 * t + 60 * (1 - t));
+      const b   = Math.round(126 * t + 80 * (1 - t));
+
+      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
+      ctx.lineWidth   = 1 + t * 3;
+      ctx.lineCap     = 'round';
+      ctx.beginPath();
+      ctx.moveTo(trail[i-1].x, trail[i-1].y);
+      ctx.lineTo(trail[i].x,   trail[i].y);
+      ctx.stroke();
+    }
+  }
+
+  function drawBob(bx, by, speed) {
+    const R = 16;
+
+    // Speed-based glow radius
+    const glowR = R + 10 + speed * 18;
+    const glow  = ctx.createRadialGradient(bx, by, R*0.3, bx, by, glowR);
+    glow.addColorStop(0, 'rgba(200,169,126,0.25)');
+    glow.addColorStop(1, 'rgba(200,169,126,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(bx, by, glowR, 0, Math.PI*2);
+    ctx.fill();
+
+    // Drop shadow
+    ctx.shadowColor   = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur    = 14;
+    ctx.shadowOffsetY = 6;
+
+    // Bob body — gold sphere illusion
+    const sphere = ctx.createRadialGradient(bx - R*0.3, by - R*0.3, R*0.05, bx, by, R);
+    sphere.addColorStop(0, '#f5e6c8');
+    sphere.addColorStop(0.35, '#c8a97e');
+    sphere.addColorStop(1, '#5a3e28');
+    ctx.fillStyle = sphere;
+    ctx.beginPath();
+    ctx.arc(bx, by, R, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur  = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Specular highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.beginPath();
+    ctx.arc(bx - R*0.28, by - R*0.28, R*0.38, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // ── Main animation loop ───────────────────────────────────────
+  function loop(timestamp) {
+    if (state.paused) return;
+
+    // Delta time in seconds (clamped to avoid spiral)
+    if (state.lastTime === null) state.lastTime = timestamp;
+    const dt = Math.min((timestamp - state.lastTime) / 1000, 0.04);
+    state.lastTime = timestamp;
+
+    // ── Physics: simple pendulum ODE ─────────────────────────
+    // α = -(g / L) * sin(θ)
+    const alpha = -(state.gravity / state.length) * Math.sin(state.angle);
+    state.omega += alpha * dt * 60;   // scale to 60fps reference
+    state.omega *= state.damping;
+    state.angle += state.omega * dt * 60;
+
+    // ── Geometry ──────────────────────────────────────────────
+    const W  = canvas.width;
+    const H  = canvas.height;
+    const px = W / 2;
+    const py = H * 0.18;             // pivot sits at 18% from top
+
+    const bx = px + Math.sin(state.angle) * state.length;
+    const by = py + Math.cos(state.angle) * state.length;
+
+    // Normalised speed [0,1] for effects
+    const maxOmega = Math.sqrt(2 * state.gravity / state.length);
+    const speed    = Math.min(Math.abs(state.omega) / (maxOmega || 1), 1);
+
+    // Update trail
+    trail.push({ x: bx, y: by });
+    if (trail.length > TRAIL_LEN) trail.shift();
+
+    // ── Render ────────────────────────────────────────────────
+    drawBackground();
+    drawTrail(trail);
+    drawRod(px, py, bx, by);
+    drawPivot(px, py);
+    drawBob(bx, by, speed);
+
+    requestAnimationFrame(loop);
+  }
+
+  requestAnimationFrame(loop);
+</script>
+</body>
+</html>

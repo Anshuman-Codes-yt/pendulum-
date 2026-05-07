@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pendulum</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        
+        body {
+            margin: 0;
+            height: 100vh;
+            background: linear-gradient(#0f1626, #1a2238);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-family: 'Inter', system_ui, sans-serif;
+        }
+        
+        canvas {
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+            background: #0a0f1c;
+        }
+        
+        .info {
+            position: absolute;
+            top: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #94a3b8;
+            font-size: 15px;
+            font-weight: 400;
+            letter-spacing: 0.5px;
+            pointer-events: none;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.85);
+            padding: 10px 24px;
+            border-radius: 9999px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            color: #cbd5e1;
+            font-size: 14px;
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3);
+        }
+        
+        button {
+            background: #334155;
+            color: #e2e8f0;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 9999px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        button:hover {
+            background: #475569;
+            transform: translateY(-1px);
+        }
+        
+        .value {
+            font-family: monospace;
+            background: #1e2937;
+            padding: 4px 10px;
+            border-radius: 6px;
+            min-width: 42px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="info">Simple Pendulum • Physics Simulation</div>
+    
+    <canvas id="canvas" width="800" height="600"></canvas>
+    
+    <div class="controls">
+        <button id="pauseBtn">Pause</button>
+        <button id="resetBtn">Reset</button>
+        
+        <span style="margin-left: 8px;">Length:</span>
+        <input type="range" id="lengthSlider" min="120" max="380" value="260" style="width: 140px;">
+        <span id="lengthValue" class="value">260</span>
+        
+        <span style="margin-left: 12px;">Gravity:</span>
+        <input type="range" id="gSlider" min="300" max="1200" value="680" style="width: 140px;">
+        <span id="gValue" class="value">680</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let WIDTH = 800;
+        let HEIGHT = 600;
+        
+        // Physics parameters
+        let length = 260;
+        let angle = Math.PI / 3.5; // initial angle ~51 degrees
+        let angularVelocity = 0;
+        let gravity = 680;
+        let damping = 0.995; // very light air resistance
+        
+        const pivotX = WIDTH / 2;
+        const pivotY = 140;
+        
+        let isPaused = false;
+        let lastTime = 0;
+        
+        // Mouse interaction
+        let isDragging = false;
+        
+        function resizeCanvas() {
+            // Fixed size for simplicity
+        }
+        
+        function getBobPosition() {
+            const bobX = pivotX + length * Math.sin(angle);
+            const bobY = pivotY + length * Math.cos(angle);
+            return { x: bobX, y: bobY };
+        }
+        
+        function draw() {
+            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+            
+            const bob = getBobPosition();
+            
+            // Draw ceiling mount
+            ctx.fillStyle = '#64748b';
+            ctx.fillRect(pivotX - 40, pivotY - 25, 80, 18);
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(pivotX - 12, pivotY - 40, 24, 25);
+            
+            // Draw pendulum rod (thick line with gradient feel)
+            ctx.strokeStyle = '#e2e8f0';
+            ctx.lineWidth = 7;
+            ctx.lineCap = 'round';
+            ctx.shadowColor = 'rgba(226, 232, 240, 0.3)';
+            ctx.shadowBlur = 12;
+            ctx.beginPath();
+            ctx.moveTo(pivotX, pivotY);
+            ctx.lineTo(bob.x, bob.y);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            // Thin highlight on rod
+            ctx.strokeStyle = 'rgba(241, 245, 255, 0.4)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(pivotX, pivotY);
+            ctx.lineTo(bob.x, bob.y);
+            ctx.stroke();
+            
+            // Draw bob
+            const bobRadius = 28;
+            
+            // Shadow under bob
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+            ctx.beginPath();
+            ctx.ellipse(bob.x + 6, bob.y + 12, bobRadius * 0.85, bobRadius * 0.3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Main bob
+            ctx.fillStyle = '#f87171';
+            ctx.beginPath();
+            ctx.arc(bob.x, bob.y, bobRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Highlight on bob
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.beginPath();
+            ctx.arc(bob.x - 9, bob.y - 9, 12, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Small inner circle
+            ctx.fillStyle = '#991b1b';
+            ctx.beginPath();
+            ctx.arc(bob.x, bob.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Pivot dot
+            ctx.fillStyle = '#e2e8f0';
+            ctx.beginPath();
+            ctx.arc(pivotX, pivotY, 9, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#475569';
+            ctx.beginPath();
+            ctx.arc(pivotX, pivotY, 5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function updatePhysics(dt) {
+            if (isPaused) return;
+            
+            // Small timestep for stability
+            const steps = 4;
+            const subDt = dt / steps;
+            
+            for (let i = 0; i < steps; i++) {
+                // Angular acceleration: α = -(g/L) * sin(θ)
+                const angularAccel = - (gravity / length) * Math.sin(angle);
+                
+                // Update velocity
+                angularVelocity += angularAccel * subDt;
+                
+                // Apply very light damping
+                angularVelocity *= damping;
+                
+                // Update angle
+                angle += angularVelocity * subDt;
+            }
+        }
+        
+        function animate(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap dt
+            lastTime = timestamp;
+            
+            updatePhysics(dt);
+            draw();
+            
+            requestAnimationFrame(animate);
+        }
+        
+        function reset() {
+            angle = Math.PI / 3.5;
+            angularVelocity = 0;
+        }
+        
+        // Event listeners
+        function setupControls() {
+            const pauseBtn = document.getElementById('pauseBtn');
+            const resetBtn = document.getElementById('resetBtn');
+            const lengthSlider = document.getElementById('lengthSlider');
+            const gSlider = document.getElementById('gSlider');
+            const lengthValue = document.getElementById('lengthValue');
+            const gValue = document.getElementById('gValue');
+            
+            pauseBtn.addEventListener('click', () => {
+                isPaused = !isPaused;
+                pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
+            });
+            
+            resetBtn.addEventListener('click', () => {
+                reset();
+            });
+            
+            lengthSlider.addEventListener('input', () => {
+                length = parseFloat(lengthSlider.value);
+                lengthValue.textContent = Math.round(length);
+                // Prevent sudden jump when changing length
+                if (Math.abs(angle) > Math.PI / 2) {
+                    angle = Math.sign(angle) * Math.PI / 3;
+                }
+            });
+            
+            gSlider.addEventListener('input', () => {
+                gravity = parseFloat(gSlider.value);
+                gValue.textContent = Math.round(gravity);
+            });
+            
+            // Mouse drag to set angle
+            canvas.addEventListener('mousedown', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                const bob = getBobPosition();
+                const dist = Math.hypot(mouseX - bob.x, mouseY - bob.y);
+                
+                if (dist < 45) {
+                    isDragging = true;
+                    isPaused = true;
+                    pauseBtn.textContent = 'Resume';
+                }
+            });
+            
+            window.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                
+                // Calculate new angle from pivot
+                const dx = mouseX - pivotX;
+                const dy = (e.clientY - rect.top) - pivotY;
+                
+                let targetAngle = Math.atan2(dx, dy);
+                
+                // Clamp angle
+                targetAngle = Math.max(-Math.PI * 0.9, Math.min(Math.PI * 0.9, targetAngle));
+                
+                angle = targetAngle;
+                angularVelocity = 0;
+            });
+            
+            window.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                }
+            });
+            
+            // Touch support
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = touch.clientX - rect.left;
+                const mouseY = touch.clientY - rect.top;
+                
+                const bob = getBobPosition();
+                const dist = Math.hypot(mouseX - bob.x, mouseY - bob.y);
+                
+                if (dist < 45) {
+                    isDragging = true;
+                    isPaused = true;
+                    pauseBtn.textContent = 'Resume';
+                }
+            });
+            
+            canvas.addEventListener('touchmove', (e) => {
+                if (!isDragging) return;
+                e.preventDefault();
+                
+                const touch = e.touches[0];
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = touch.clientX - rect.left;
+                const dy = (touch.clientY - rect.top) - pivotY;
+                const dx = mouseX - pivotX;
+                
+                let targetAngle = Math.atan2(dx, dy);
+                targetAngle = Math.max(-Math.PI * 0.9, Math.min(Math.PI * 0.9, targetAngle));
+                
+                angle = targetAngle;
+                angularVelocity = 0;
+            });
+            
+            window.addEventListener('touchend', () => {
+                isDragging = false;
+            });
+            
+            // Keyboard support
+            window.addEventListener('keydown', (e) => {
+                if (e.key === ' ' || e.key === 'k' || e.key === 'K') {
+                    isPaused = !isPaused;
+                    pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
+                }
+                
+                if (e.key === 'r' || e.key === 'R') {
+                    reset();
+                }
+            });
+        }
+        
+        // Initialize
+        function init() {
+            resizeCanvas();
+            setupControls();
+            reset();
+            requestAnimationFrame(animate);
+        }
+        
+        window.onload = init;
+    </script>
+</body>
+</html>
